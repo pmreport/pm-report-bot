@@ -50,6 +50,14 @@ RATE_LIMIT_WINDOW   = 60   # per 60 detik
 # Telegram initData max age (detik) — tolak jika > 1 jam
 INIT_DATA_MAX_AGE = 3600
 
+# Self-ping untuk mencegah sleep (Render.com free tier)
+# Set ke 0 untuk nonaktifkan
+PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "600"))  # detik, default 10 menit
+
+# Keep-alive ping interval (detik) — 0 = nonaktif
+# Set di .env: PING_INTERVAL=600 (ping setiap 10 menit)
+PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "0").strip() or "0")
+
 # ─────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────
@@ -520,8 +528,25 @@ def cleanup_old_files():
 
 
 # ─────────────────────────────────────────
-# Telegram: kirim DOCX ke group
+# Self-ping untuk mencegah sleep (Render free tier)
 # ─────────────────────────────────────────
+def self_ping():
+    """Ping endpoint /health secara berkala agar app tidak sleep."""
+    if not PING_INTERVAL or PING_INTERVAL <= 0:
+        log.info("Self-ping dinonaktifkan (PING_INTERVAL=0)")
+        return
+
+    import urllib.request
+    ping_url = f"{SERVER_URL}/health"
+    log.info(f"Self-ping aktif → {ping_url} setiap {PING_INTERVAL}s")
+
+    while True:
+        try:
+            time.sleep(PING_INTERVAL)
+            req = urllib.request.urlopen(ping_url, timeout=10)
+            log.info(f"Self-ping OK ({req.status})")
+        except Exception as e:
+            log.warning(f"Self-ping gagal: {type(e).__name__}")
 def send_to_telegram(docx_path, tanggal, personil, template, user_chat_id=None):
     try:
         caption = (
@@ -589,6 +614,32 @@ def fallback(message):
 
 
 # ─────────────────────────────────────────
+# Keep-alive: self-ping agar tidak sleep
+# ─────────────────────────────────────────
+def keep_alive():
+    """
+    Self-ping ke /health setiap PING_INTERVAL detik.
+    Mencegah Render.com (free tier) menidurkan aplikasi.
+    Aktifkan dengan set PING_INTERVAL=600 di .env (10 menit).
+    """
+    if not PING_INTERVAL or PING_INTERVAL <= 0:
+        log.info("Keep-alive: nonaktif (PING_INTERVAL=0)")
+        return
+
+    import urllib.request
+    ping_url = f"{SERVER_URL}/health" if SERVER_URL else "http://localhost:5000/health"
+    log.info(f"Keep-alive: aktif, ping setiap {PING_INTERVAL}s ke {ping_url}")
+
+    while True:
+        time.sleep(PING_INTERVAL)
+        try:
+            urllib.request.urlopen(ping_url, timeout=10)
+            log.info(f"Keep-alive: ping OK → {ping_url}")
+        except Exception as e:
+            log.warning(f"Keep-alive: ping gagal → {e}")
+
+
+# ─────────────────────────────────────────
 # Run
 # ─────────────────────────────────────────
 def run_bot():
@@ -611,18 +662,20 @@ if __name__ == "__main__":
 
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "bot":
-        # Mode Service Bot (dipanggil via systemd: python3 app.py bot)
+        # Mode Service Bot (dipanggil via render_start.sh: python app.py bot)
         log.info("Running in BOT ONLY mode (for Gunicorn deployment)...")
         cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
         cleanup_thread.start()
-        run_bot() # Menahan thread utama
+        ping_thread = threading.Thread(target=self_ping, daemon=True)
+        ping_thread.start()
+        run_bot()  # Menahan thread utama
     else:
-        # Mode Local / Screen (menjalankan Flask built-in + Bot bersamaan)
+        # Mode Local / Screen (Flask built-in + Bot bersamaan)
         cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
         cleanup_thread.start()
-
+        ping_thread = threading.Thread(target=self_ping, daemon=True)
+        ping_thread.start()
         bot_thread = threading.Thread(target=run_bot, daemon=True)
         bot_thread.start()
-
         log.info(f"Flask running on port 5000 | URL: {SERVER_URL}")
         app.run(host="0.0.0.0", port=5000, debug=False)
