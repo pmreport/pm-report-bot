@@ -325,6 +325,71 @@
       font-size: 12px;
     }
 
+    /* ── Multi-select Personil ───────────── */
+    .personil-picker {
+      width: 100%;
+      padding: 8px 0 4px;
+    }
+    .personil-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 32px;
+      margin-bottom: 8px;
+    }
+    .personil-tag {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: color-mix(in srgb, var(--btn) 15%, transparent);
+      border: 1px solid color-mix(in srgb, var(--btn) 30%, transparent);
+      color: var(--btn);
+      border-radius: 20px;
+      padding: 4px 10px 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .personil-tag-remove {
+      background: none;
+      border: none;
+      color: var(--btn);
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      opacity: 0.7;
+      font-family: sans-serif;
+    }
+    .personil-tag-remove:active { opacity: 1; }
+    .personil-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .personil-opt {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      transition: all 0.15s;
+      -webkit-user-select: none;
+    }
+    .personil-opt.selected {
+      background: color-mix(in srgb, var(--btn) 15%, transparent);
+      border-color: color-mix(in srgb, var(--btn) 40%, transparent);
+      color: var(--btn);
+    }
+    .personil-opt:active { opacity: 0.7; }
+    .personil-placeholder {
+      font-size: 12px;
+      color: var(--hint);
+      padding: 4px 0;
+    }
+
     /* ── Section banner ──────────────────── */
     .sec-banner {
       display: flex;
@@ -924,7 +989,68 @@
       color: var(--hint);
     }
 
-    /* ── Result ──────────────────────────── */
+    /* ── Multi-select Personil ───────────────*/
+.personil-tags {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 12px; min-height: 42px;
+  cursor: pointer; align-items: center;
+}
+.personil-placeholder {
+  font-size: 13px; color: var(--hint);
+}
+.personil-tag {
+  display: flex; align-items: center; gap: 5px;
+  background: color-mix(in srgb, var(--btn) 15%, transparent);
+  color: var(--btn);
+  border: 1px solid color-mix(in srgb, var(--btn) 30%, transparent);
+  border-radius: 20px;
+  padding: 3px 10px 3px 12px;
+  font-size: 12px; font-weight: 500;
+  white-space: nowrap;
+}
+.personil-tag-remove {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--btn) 25%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; cursor: pointer; flex-shrink: 0;
+  line-height: 1;
+}
+.personil-tag-remove:active { opacity: 0.6; }
+
+.personil-dropdown {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: hidden;
+  margin: 0 -1px;
+}
+.personil-dropdown.open { display: block; }
+.personil-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; font-size: 13px;
+  transition: background 0.15s;
+  -webkit-user-select: none;
+}
+.personil-option:last-child { border-bottom: none; }
+.personil-option:active { background: var(--surface2); }
+.personil-option.selected { color: var(--btn); }
+.personil-check {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 11px;
+  transition: all 0.15s;
+}
+.personil-option.selected .personil-check {
+  background: var(--btn); border-color: var(--btn); color: white;
+}
+
+/* ── Result ──────────────────────────── */
     .result-box {
       background: var(--green-dim);
       border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
@@ -1008,17 +1134,36 @@
         <span class="row-label">Tanggal</span>
         <input type="date" id="inp_tanggal" style="text-align:right;font-size:13px;font-weight:500;" />
       </div>
-      <div class="card-row">
-        <span class="row-label">Personil</span>
-        <select id="inp_personil">
-          <option value="">— Pilih —</option>
-          <option value="Misbahuddin">Misbahuddin</option>
-          <option value="Guswara Tirta Satria">Guswara Tirta Satria</option>
-          <option value="Safrizal">Safrizal</option>
-          <option value="Heri Noviardi">Heri Noviardi</option>
-          <option value="Fakhrurrazi Putra">Fakhrurrazi Putra</option>
-          <option value="Rendy Wijaya">Rendy Wijaya</option>
-        </select>
+      <div class="card-row" style="flex-direction:column;align-items:stretch;padding:0;gap:0;" id="personil_wrapper">
+        <div class="personil-tags" id="personil_tags" onclick="togglePersonilDropdown()">
+          <span class="personil-placeholder" id="personil_placeholder">— Pilih Personil —</span>
+        </div>
+        <div class="personil-dropdown" id="personil_dropdown">
+          <div class="personil-option" data-val="Misbahuddin" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Misbahuddin</span>
+          </div>
+          <div class="personil-option" data-val="Guswara Tirta Satria" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Guswara Tirta Satria</span>
+          </div>
+          <div class="personil-option" data-val="Safrizal" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Safrizal</span>
+          </div>
+          <div class="personil-option" data-val="Heri Noviardi" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Heri Noviardi</span>
+          </div>
+          <div class="personil-option" data-val="Fakhrurrazi Putra" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Fakhrurrazi Putra</span>
+          </div>
+          <div class="personil-option" data-val="Rendy Wijaya" onclick="togglePersonil(this)">
+            <div class="personil-check">✓</div>
+            <span>Rendy Wijaya</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1226,7 +1371,76 @@
     }
 
     // ══════════════════════════════════════════
-    // Master Data
+    // Multi-select Personil
+    // ══════════════════════════════════════════
+    var selectedPersonil = [];
+
+    function togglePersonilDropdown() {
+      var dd = document.getElementById("personil_dropdown");
+      dd.classList.toggle("open");
+    }
+
+    function togglePersonil(el) {
+      var val = el.getAttribute("data-val");
+      var idx = selectedPersonil.indexOf(val);
+      if (idx === -1) {
+        selectedPersonil.push(val);
+        el.classList.add("selected");
+      } else {
+        selectedPersonil.splice(idx, 1);
+        el.classList.remove("selected");
+      }
+      renderPersonilTags();
+    }
+
+    function removePersonil(val) {
+      selectedPersonil = selectedPersonil.filter(function(p) { return p !== val; });
+      // Sync dropdown state
+      var opts = document.querySelectorAll(".personil-option");
+      opts.forEach(function(opt) {
+        if (opt.getAttribute("data-val") === val) {
+          opt.classList.remove("selected");
+        }
+      });
+      renderPersonilTags();
+    }
+
+    function renderPersonilTags() {
+      var container   = document.getElementById("personil_tags");
+      var placeholder = document.getElementById("personil_placeholder");
+
+      // Hapus tag lama (biarkan placeholder)
+      var oldTags = container.querySelectorAll(".personil-tag");
+      oldTags.forEach(function(t) { t.remove(); });
+
+      if (selectedPersonil.length === 0) {
+        placeholder.style.display = "";
+      } else {
+        placeholder.style.display = "none";
+        selectedPersonil.forEach(function(name) {
+          var tag = document.createElement("div");
+          tag.className = "personil-tag";
+          tag.innerHTML =
+            '<span>' + name + '</span>' +
+            '<div class="personil-tag-remove" onclick="event.stopPropagation();removePersonil(\'' +
+            name.replace(/'/g, "\\'") + '\')">✕</div>';
+          container.insertBefore(tag, placeholder);
+        });
+      }
+    }
+
+    function getPersonilValue() {
+      return selectedPersonil.join(", ");
+    }
+
+    // Tutup dropdown jika klik di luar
+    document.addEventListener("click", function(e) {
+      var wrapper = document.getElementById("personil_wrapper");
+      if (wrapper && !wrapper.contains(e.target)) {
+        var dd = document.getElementById("personil_dropdown");
+        if (dd) dd.classList.remove("open");
+      }
+    });
     // ══════════════════════════════════════════
     var SECTION3 = {
       none: { label: "Daily only", mesin: "", total: 0 },
@@ -1784,7 +1998,7 @@
       var tglStr = getFormattedDate();   // "13 April 2026"
 
       document.getElementById("sum_tgl").textContent = tglStr;
-      document.getElementById("sum_per").textContent = document.getElementById("inp_personil").value || "—";
+      document.getElementById("sum_per").textContent = getPersonilValue() || "—";
       document.getElementById("sum_s3").textContent = tpl ? tpl.label + (mesin ? " · " + mesin.label : "") : "—";
 
       if (!tpl) {
@@ -1816,13 +2030,16 @@
 
       document.getElementById("sum_tot").textContent = totalDone + " / " + totalAll + " foto";
 
-      var allDone = totalDone === totalAll && !!mesin;
+      var hasPersonil = selectedPersonil.length > 0;
+      var allDone     = totalDone === totalAll && !!mesin && hasPersonil;
       var btn = document.getElementById("btn_gen");
       var sub = document.getElementById("btn_sub");
       btn.className = "btn-gen " + (allDone ? "ready" : "disabled");
       sub.textContent = allDone
         ? "Semua foto lengkap — siap generate!"
-        : (!mesin ? "Pilih mesin terlebih dahulu" : "Lengkapi semua foto terlebih dahulu");
+        : (!hasPersonil ? "Pilih personil terlebih dahulu"
+          : !mesin      ? "Pilih mesin terlebih dahulu"
+          : "Lengkapi semua foto terlebih dahulu");
     }
 
     function countDone(prefix, total) {
@@ -1853,9 +2070,9 @@
         return;
       }
 
-      var tanggal = getFormattedDate();   // "13 April 2026"
-      var personil = document.getElementById("inp_personil").value || "—";
-      var snText = mesin ? mesin.sn : "—";
+      var tanggal  = getFormattedDate();
+      var personil = getPersonilValue() || "—";
+      var snText   = mesin ? mesin.sn : "—";
 
       var times = {
         mvxr: document.getElementById("t_mvxr_s").value + " - " + document.getElementById("t_mvxr_e").value,
@@ -2060,6 +2277,7 @@
       var tpl = getActiveTpl();
       var mesin = getActiveMesin();
       if (!tpl || !mesin) { toast("⚠️ Pilih template dan mesin dulu"); return; }
+      if (selectedPersonil.length === 0) { toast("⚠️ Pilih personil terlebih dahulu"); return; }
 
       var tglStr = getFormattedDate();   // "13 April 2026"
 
@@ -2072,7 +2290,7 @@
       var payload = {
         template: tpl.file,
         tanggal: tglStr,
-        personil: document.getElementById("inp_personil").value,
+        personil: getPersonilValue(),
         serial_number: mesin.sn,
         time_mvxr: document.getElementById("t_mvxr_s").value + " - " + document.getElementById("t_mvxr_e").value,
         time_rtt: document.getElementById("t_rtt_s").value + " - " + document.getElementById("t_rtt_e").value,
