@@ -1391,11 +1391,11 @@
         el.classList.remove("selected");
       }
       renderPersonilTags();
+      autoSave();
     }
 
     function removePersonil(val) {
       selectedPersonil = selectedPersonil.filter(function(p) { return p !== val; });
-      // Sync dropdown state
       var opts = document.querySelectorAll(".personil-option");
       opts.forEach(function(opt) {
         if (opt.getAttribute("data-val") === val) {
@@ -1403,6 +1403,7 @@
         }
       });
       renderPersonilTags();
+      autoSave();
     }
 
     function renderPersonilTags() {
@@ -1441,6 +1442,109 @@
         if (dd) dd.classList.remove("open");
       }
     });
+
+    // ══════════════════════════════════════════
+    // Session: Auto-save & Auto-load
+    // ══════════════════════════════════════════
+    var _saveTimer = null;
+
+    function collectSessionData() {
+      return {
+        tanggal:     document.getElementById("inp_tanggal") ? document.getElementById("inp_tanggal").value : "",
+        personil:    selectedPersonil.slice(),
+        template:    document.getElementById("inp_template") ? document.getElementById("inp_template").value : "",
+        mesin_index: (function() { var s = document.getElementById("inp_mesin"); return s ? s.value : ""; })(),
+        time_mvxr:   (function() { var s = document.getElementById("t_mvxr_s"), e = document.getElementById("t_mvxr_e"); return s && e ? s.value + "-" + e.value : ""; })(),
+        time_rtt:    (function() { var s = document.getElementById("t_rtt_s"),  e = document.getElementById("t_rtt_e");  return s && e ? s.value + "-" + e.value : ""; })(),
+        time_s3:     (function() { var s = document.getElementById("t_s3_s"),   e = document.getElementById("t_s3_e");   return s && e ? s.value + "-" + e.value : ""; })(),
+        photos:      photoUploaded
+      };
+    }
+
+    function autoSave() {
+      clearTimeout(_saveTimer);
+      _saveTimer = setTimeout(function() {
+        var data     = collectSessionData();
+        data.initData = getInitData();
+        authFetch(SERVER_URL + "/session/save", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(data)
+        }).catch(function() {});  // silent fail
+      }, 800);
+    }
+
+    function restoreTimeField(savedVal, startId, endId) {
+      if (!savedVal) return;
+      var parts = savedVal.split("-");
+      if (parts.length >= 2) {
+        var s = document.getElementById(startId);
+        var e = document.getElementById(endId);
+        if (s) s.value = parts[0];
+        if (e) e.value = parts[1];
+      }
+    }
+
+    function loadSession() {
+      authFetch(SERVER_URL + "/session/load")
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (!res.success || !res.session) return;
+          var s = res.session;
+
+          // 1. Tanggal
+          if (s.tanggal) {
+            var el = document.getElementById("inp_tanggal");
+            if (el) el.value = s.tanggal;
+          }
+
+          // 2. Personil
+          if (s.personil && Array.isArray(s.personil) && s.personil.length > 0) {
+            selectedPersonil = [];
+            s.personil.forEach(function(name) {
+              document.querySelectorAll(".personil-option").forEach(function(opt) {
+                if (opt.getAttribute("data-val") === name) {
+                  selectedPersonil.push(name);
+                  opt.classList.add("selected");
+                }
+              });
+            });
+            renderPersonilTags();
+          }
+
+          // 3. Template → setelah captions siap, restore mesin + foto
+          if (s.template) {
+            var tplSel = document.getElementById("inp_template");
+            if (tplSel) {
+              tplSel.value = s.template;
+              onTemplateChange(function() {
+                // 4. Mesin
+                if (s.mesin_index !== "" && s.mesin_index !== undefined) {
+                  var mesinSel = document.getElementById("inp_mesin");
+                  if (mesinSel) {
+                    mesinSel.value = s.mesin_index;
+                    onMesinChange();
+                  }
+                }
+                // 5. Foto yang sudah terupload
+                if (s.photos && Object.keys(s.photos).length > 0) {
+                  Object.assign(photoUploaded, s.photos);
+                  renderPhotoList();
+                  updateSummary();
+                  toast("📋 Draft dimuat — lanjutkan dari sesi terakhir");
+                }
+              });
+            }
+          }
+
+          // 6. Waktu (restore langsung, tidak perlu tunggu captions)
+          restoreTimeField(s.time_mvxr, "t_mvxr_s", "t_mvxr_e");
+          restoreTimeField(s.time_rtt,  "t_rtt_s",  "t_rtt_e");
+          restoreTimeField(s.time_s3,   "t_s3_s",   "t_s3_e");
+        })
+        .catch(function() {});  // silent fail
+    }
+
     // ══════════════════════════════════════════
     var SECTION3 = {
       none: { label: "Daily only", mesin: "", total: 0 },
@@ -1544,13 +1648,25 @@
     // Init
     // ══════════════════════════════════════════
     window.onload = function () {
-      // Set default tanggal hari ini
       var today = new Date();
       var pad = function (n) { return String(n).padStart(2, "0"); };
       document.getElementById("inp_tanggal").value =
         today.getFullYear() + "-" + pad(today.getMonth() + 1) + "-" + pad(today.getDate());
 
       renderPhotoList();
+
+      // Hook autoSave ke semua field input
+      ["inp_tanggal"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener("change", autoSave);
+      });
+      ["t_mvxr_s","t_mvxr_e","t_rtt_s","t_rtt_e","t_s3_s","t_s3_e"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener("change", autoSave);
+      });
+
+      // Auto-load session setelah app siap
+      setTimeout(loadSession, 600);
     };
 
     // ══════════════════════════════════════════
@@ -1640,11 +1756,13 @@
       return CAPTIONS[key] || [];
     }
 
-    function onTemplateChange() {
+    function onTemplateChange(callback) {
       var tpl = getActiveTpl();
 
-      // Reset mesin & photos
-      photoFiles = {}; photoBlobs = {}; photoUploaded = {};
+      // Reset hanya saat user action (bukan restore session)
+      if (!callback) {
+        photoFiles = {}; photoBlobs = {}; photoUploaded = {};
+      }
 
       if (!tpl) {
         document.getElementById("row_mesin").style.display = "none";
@@ -1679,10 +1797,9 @@
           return;
         }
 
-        // Split captions per section berdasarkan total di TEMPLATES
-        var s1total = tpl.sections[0].total;  // 6
-        var s2total = tpl.sections[1].total;  // 9
-        var s3total = tpl.sections[2].total;  // 14
+        var s1total = tpl.sections[0].total;
+        var s2total = tpl.sections[1].total;
+        var s3total = tpl.sections[2].total;
 
         tpl.sections[0].captionList = captions.slice(0, s1total);
         tpl.sections[1].captionList = captions.slice(s1total, s1total + s2total);
@@ -1702,7 +1819,13 @@
         });
 
         renderPhotoList();
+
+        // Jalankan callback (session restore) setelah captions siap
+        if (typeof callback === "function") callback();
       });
+
+      // Auto-save hanya saat user action
+      if (!callback) autoSave();
     }
 
     function onMesinChange() {
@@ -1713,6 +1836,7 @@
       }
       document.getElementById("disp_sn").textContent = mesin.sn;
       document.getElementById("row_sn").style.display = "";
+      autoSave();
     }
 
     // ══════════════════════════════════════════
@@ -1938,6 +2062,7 @@
               refreshItem(key, caption);
               updateBannerCount(key.split("_")[0]);
               toast("✓ Foto terupload");
+              autoSave();  // simpan progress foto ke session
             } else {
               if (attempt < 3) {
                 setTimeout(function () { doUpload(attempt + 1, uploadFile); }, 500);
@@ -2316,6 +2441,12 @@
             document.getElementById("result_box").style.display = "block";
             document.getElementById("result_box").scrollIntoView({ behavior: "smooth" });
             toast("✅ Laporan berhasil dibuat!");
+            // Clear session — laporan sudah selesai
+            authFetch(SERVER_URL + "/session/clear", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ initData: getInitData() })
+            }).catch(function() {});
             if (tg) tg.close();
           } else {
             toast("❌ " + (res.error || "Generate gagal"));
