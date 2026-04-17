@@ -31,6 +31,7 @@ ALLOWED_USERS = set(u.strip() for u in _raw_users.split(",") if u.strip())
 UPLOAD_DIR    = "uploads"
 OUTPUTS_DIR   = "outputs"
 TEMPLATES_DIR = "templates"
+SESSION_FILE  = "sessions.json"   # persistent session storage
 
 # Whitelist template yang diizinkan
 ALLOWED_TEMPLATES = {
@@ -50,14 +51,6 @@ RATE_LIMIT_WINDOW   = 60   # per 60 detik
 # Telegram initData max age (detik) — tolak jika > 1 jam
 INIT_DATA_MAX_AGE = 3600
 
-# Self-ping untuk mencegah sleep (Render.com free tier)
-# Set ke 0 untuk nonaktifkan
-PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "600"))  # detik, default 10 menit
-
-# Keep-alive ping interval (detik) — 0 = nonaktif
-# Set di .env: PING_INTERVAL=600 (ping setiap 10 menit)
-PING_INTERVAL = int(os.environ.get("PING_INTERVAL", "0").strip() or "0")
-
 # ─────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────
@@ -70,6 +63,58 @@ log = logging.getLogger(__name__)
 
 for d in [UPLOAD_DIR, OUTPUTS_DIR, "temp"]:
     os.makedirs(d, exist_ok=True)
+
+# ─────────────────────────────────────────
+# Session Manager (persistent ke sessions.json)
+# ─────────────────────────────────────────
+import json as _json
+
+_session_lock = threading.Lock()
+
+def _load_sessions():
+    """Baca sessions.json dari disk."""
+    try:
+        if os.path.exists(SESSION_FILE):
+            with open(SESSION_FILE, "r") as f:
+                return _json.load(f)
+    except Exception as e:
+        log.error(f"Session load error: {e}")
+    return {}
+
+def _save_sessions(data):
+    """Tulis sessions.json ke disk secara atomic."""
+    try:
+        tmp = SESSION_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, SESSION_FILE)
+    except Exception as e:
+        log.error(f"Session save error: {e}")
+
+def session_save(user_id, session_data):
+    """Simpan/update session untuk user_id tertentu."""
+    with _session_lock:
+        sessions = _load_sessions()
+        sessions[str(user_id)] = {
+            **session_data,
+            "updated_at": time.time()
+        }
+        _save_sessions(sessions)
+
+def session_load(user_id):
+    """Load session untuk user_id. Return None jika tidak ada."""
+    with _session_lock:
+        sessions = _load_sessions()
+        return sessions.get(str(user_id))
+
+def session_clear(user_id):
+    """Hapus session untuk user_id setelah generate berhasil."""
+    with _session_lock:
+        sessions = _load_sessions()
+        if str(user_id) in sessions:
+            del sessions[str(user_id)]
+            _save_sessions(sessions)
+            log.info(f"Session cleared: user={user_id}")
 
 # ─────────────────────────────────────────
 # Rate Limiter
@@ -206,6 +251,9 @@ def add_security_headers(response):
 @app.route("/upload", methods=["OPTIONS"])
 @app.route("/generate", methods=["OPTIONS"])
 @app.route("/verify", methods=["OPTIONS"])
+@app.route("/session/save", methods=["OPTIONS"])
+@app.route("/session/load", methods=["OPTIONS"])
+@app.route("/session/clear", methods=["OPTIONS"])
 def options_handler():
     return "", 200
 
@@ -405,6 +453,10 @@ def generate():
                 result["docx"] = docx_path
                 send_to_telegram(docx_path, tanggal, personil, template_clean, chat_id)
 
+                # Clear session setelah generate berhasil
+                if user_id:
+                    session_clear(user_id)
+
                 # Cleanup foto upload setelah generate
                 for p in image_paths:
                     try:
@@ -505,6 +557,81 @@ def health():
 
 
 # ─────────────────────────────────────────
+# Session Endpoints
+# ─────────────────────────────────────────
+
+@app.route("/session/save", methods=["POST"])
+def session_save_route():
+    """
+    Auto-save draft session user.
+    Payload: { initData, tanggal, personil, template, mesin_index,
+               time_mvxr, time_rtt, time_s3, photos }
+    """
+    try:
+        authorized, user_id, err_resp = check_telegram_auth()
+        if not authorized:
+            return err_resp
+
+        data = request.get_json(silent=True) or {}
+
+        # Field yang boleh disimpan (whitelist)
+        allowed_fields = {
+            "tanggal", "personil", "template",
+            "mesin_index", "time_mvxr", "time_rtt", "time_s3", "photos"
+        }
+        save_data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        if not save_data:
+            return jsonify({"success": False, "error": "Tidak ada data"}), 400
+
+        session_save(user_id, save_data)
+        return jsonify({"success": True})
+
+    except Exception as e:
+        log.error(f"Session save error: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Gagal menyimpan session"}), 500
+
+
+@app.route("/session/load", methods=["GET"])
+def session_load_route():
+    """
+    Load draft session terakhir user.
+    Returns: session data atau null jika tidak ada
+    """
+    try:
+        authorized, user_id, err_resp = check_telegram_auth()
+        if not authorized:
+            return err_resp
+
+        data = session_load(user_id)
+        if data:
+            log.info(f"Session loaded: user={user_id}")
+            return jsonify({"success": True, "session": data})
+        else:
+            return jsonify({"success": True, "session": None})
+
+    except Exception as e:
+        log.error(f"Session load error: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Gagal load session"}), 500
+
+
+@app.route("/session/clear", methods=["POST"])
+def session_clear_route():
+    """Hapus session setelah generate berhasil."""
+    try:
+        authorized, user_id, err_resp = check_telegram_auth()
+        if not authorized:
+            return err_resp
+
+        session_clear(user_id)
+        return jsonify({"success": True})
+
+    except Exception as e:
+        log.error(f"Session clear error: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Gagal hapus session"}), 500
+
+
+# ─────────────────────────────────────────
 # Auto-cleanup file lama
 # ─────────────────────────────────────────
 def cleanup_old_files():
@@ -528,25 +655,8 @@ def cleanup_old_files():
 
 
 # ─────────────────────────────────────────
-# Self-ping untuk mencegah sleep (Render free tier)
+# Telegram: kirim DOCX ke group
 # ─────────────────────────────────────────
-def self_ping():
-    """Ping endpoint /health secara berkala agar app tidak sleep."""
-    if not PING_INTERVAL or PING_INTERVAL <= 0:
-        log.info("Self-ping dinonaktifkan (PING_INTERVAL=0)")
-        return
-
-    import urllib.request
-    ping_url = f"{SERVER_URL}/health"
-    log.info(f"Self-ping aktif → {ping_url} setiap {PING_INTERVAL}s")
-
-    while True:
-        try:
-            time.sleep(PING_INTERVAL)
-            req = urllib.request.urlopen(ping_url, timeout=10)
-            log.info(f"Self-ping OK ({req.status})")
-        except Exception as e:
-            log.warning(f"Self-ping gagal: {type(e).__name__}")
 def send_to_telegram(docx_path, tanggal, personil, template, user_chat_id=None):
     try:
         caption = (
@@ -614,32 +724,6 @@ def fallback(message):
 
 
 # ─────────────────────────────────────────
-# Keep-alive: self-ping agar tidak sleep
-# ─────────────────────────────────────────
-def keep_alive():
-    """
-    Self-ping ke /health setiap PING_INTERVAL detik.
-    Mencegah Render.com (free tier) menidurkan aplikasi.
-    Aktifkan dengan set PING_INTERVAL=600 di .env (10 menit).
-    """
-    if not PING_INTERVAL or PING_INTERVAL <= 0:
-        log.info("Keep-alive: nonaktif (PING_INTERVAL=0)")
-        return
-
-    import urllib.request
-    ping_url = f"{SERVER_URL}/health" if SERVER_URL else "http://localhost:5000/health"
-    log.info(f"Keep-alive: aktif, ping setiap {PING_INTERVAL}s ke {ping_url}")
-
-    while True:
-        time.sleep(PING_INTERVAL)
-        try:
-            urllib.request.urlopen(ping_url, timeout=10)
-            log.info(f"Keep-alive: ping OK → {ping_url}")
-        except Exception as e:
-            log.warning(f"Keep-alive: ping gagal → {e}")
-
-
-# ─────────────────────────────────────────
 # Run
 # ─────────────────────────────────────────
 def run_bot():
@@ -662,20 +746,18 @@ if __name__ == "__main__":
 
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "bot":
-        # Mode Service Bot (dipanggil via render_start.sh: python app.py bot)
+        # Mode Service Bot (dipanggil via systemd: python3 app.py bot)
         log.info("Running in BOT ONLY mode (for Gunicorn deployment)...")
         cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
         cleanup_thread.start()
-        ping_thread = threading.Thread(target=self_ping, daemon=True)
-        ping_thread.start()
-        run_bot()  # Menahan thread utama
+        run_bot() # Menahan thread utama
     else:
-        # Mode Local / Screen (Flask built-in + Bot bersamaan)
+        # Mode Local / Screen (menjalankan Flask built-in + Bot bersamaan)
         cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
         cleanup_thread.start()
-        ping_thread = threading.Thread(target=self_ping, daemon=True)
-        ping_thread.start()
+
         bot_thread = threading.Thread(target=run_bot, daemon=True)
         bot_thread.start()
+
         log.info(f"Flask running on port 5000 | URL: {SERVER_URL}")
         app.run(host="0.0.0.0", port=5000, debug=False)
